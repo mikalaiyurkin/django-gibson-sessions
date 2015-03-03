@@ -23,6 +23,7 @@ class SessionStore(SessionBase):
 
     def __init__(self, session_key=None):
         super(SessionStore, self).__init__(session_key=session_key)
+        self.session_backend = session_backend
 
     @staticmethod
     def prefixed_key_name(session_key=None):
@@ -34,7 +35,7 @@ class SessionStore(SessionBase):
 
     def exists(self, session_key):
         try:
-            session_backend.get(self.prefixed_key_name(session_key))
+            self.session_backend.get(self.prefixed_key_name(session_key))
             return True
         except NotFoundError:
             return False
@@ -52,27 +53,36 @@ class SessionStore(SessionBase):
     def save(self, must_create=False):
         if must_create and self.exists(self._get_or_create_session_key()):
             raise CreateError
-        session_backend.set(
-            self.prefixed_key_name(self._get_or_create_session_key()),
-            self.encode(self._get_session(no_load=must_create)),
-            self.get_expiry_age()
-        )
+        key_2_save = self.prefixed_key_name(self._get_or_create_session_key())
+        try:
+            self.session_backend.set(
+                key_2_save,
+                self.encode(self._get_session(no_load=must_create)),
+                self.get_expiry_age()
+            )
+        except LockedError:
+            self.session_backend.unlock(key_2_save)
+            self.session_backend.set(
+                key_2_save,
+                self.encode(self._get_session(no_load=must_create)),
+                self.get_expiry_age()
+            )
 
     def delete(self, session_key=None):
         key_2_delete = self.prefixed_key_name(session_key or self.session_key)
         if key_2_delete:
             try:
-                session_backend.dl(key_2_delete)
+                self.session_backend.dl(key_2_delete)
             except LockedError:
-                session_backend.unlock(key_2_delete)
-                session_backend.dl(key_2_delete)
+                self.session_backend.unlock(key_2_delete)
+                self.session_backend.dl(key_2_delete)
             except NotFoundError:
                 pass
         return
 
     def load(self):
         try:
-            return self.decode(session_backend.get(self.prefixed_key_name(self._get_or_create_session_key())))
+            return self.decode(self.session_backend.get(self.prefixed_key_name(self._get_or_create_session_key())))
         except NotFoundError:
             self.create()
             return {}
